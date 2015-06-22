@@ -3,6 +3,7 @@
 #include <string>
 #include <Lmcons.h>
 #include <vector>
+
 void PrintHeader(); //Prints the header of the command line.
 void GetInput();  //Gathers the input from user and puts into a string for command parsing.
 void KeyEventProc(KEY_EVENT_RECORD ker); //Processes the key events from the user to the console.
@@ -11,12 +12,24 @@ void AttemptAutoComplete(); //Attempts to auto complete the line buffer.
 
 bool bIsInConsole;
 bool bIsInInputMode;
+unsigned int CursorXPosition;
+HANDLE hStdin;
+DWORD fdwSaveOldMode;
 std::vector<WCHAR> LineBuffer;
 std::vector<std::vector<WCHAR>> CommandBuffer;
 std::vector<std::string> Commands;
 
 int main()
 {
+	// Get the standard input handle. 
+	hStdin = GetStdHandle(STD_INPUT_HANDLE);
+	if (hStdin == INVALID_HANDLE_VALUE)
+		return -1;
+
+	// Save the current input mode, to be restored on exit. 
+	if (!GetConsoleMode(hStdin, &fdwSaveOldMode))
+		return -1;
+	CursorXPosition = 0;
 	bIsInConsole = true;
 	bIsInInputMode = false;
 	LineBuffer.clear();
@@ -44,26 +57,12 @@ void PrintHeader()
 void GetInput()
 {
 	bIsInInputMode = true;
-	HANDLE hStdin;
-	DWORD fdwSaveOldMode;
 
-	DWORD cNumRead, fdwMode, i;
+	DWORD cNumRead;
+	DWORD fdwMode;
 	INPUT_RECORD irInBuf[128];
 	int counter = 0;
 
-	// Get the standard input handle. 
-	hStdin = GetStdHandle(STD_INPUT_HANDLE);
-	if (hStdin == INVALID_HANDLE_VALUE)
-		return;
-
-	// Save the current input mode, to be restored on exit. 
-	if (!GetConsoleMode(hStdin, &fdwSaveOldMode))
-		return;
-
-	// Enable the window and mouse input events. 
-	fdwMode = ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT;
-	if (!SetConsoleMode(hStdin, fdwMode))
-		return;
 
 	while (bIsInInputMode)
 	{
@@ -78,7 +77,7 @@ void GetInput()
 
 		// Dispatch the events to the appropriate handler. 
 
-		for (i = 0; i < cNumRead; i++)
+		for (DWORD i = 0; i < cNumRead; i++)
 		{
 			switch (irInBuf[i].EventType)
 			{
@@ -99,22 +98,64 @@ void KeyEventProc(KEY_EVENT_RECORD ker)
 {
 	if (ker.bKeyDown)
 	{
-		if (!iswspace(ker.uChar.UnicodeChar))
+		if (iswprint(ker.uChar.UnicodeChar))
 		{
 			std::wcout << ker.uChar.UnicodeChar /*<< ker.uChar.AsciiChar << ker.wVirtualKeyCode*/;
-			LineBuffer.push_back(ker.uChar.UnicodeChar);
+			LineBuffer.insert(LineBuffer.begin() + CursorXPosition, ker.uChar.UnicodeChar);
+			CursorXPosition++;
 		}
-		if (ker.wVirtualKeyCode == 13) //Return
+		else if (ker.wVirtualKeyCode == 13) //Return
 		{
 			std::wcout << std::endl;
 			EnterCommand(LineBuffer);
 			CommandBuffer.push_back(LineBuffer);
 			LineBuffer.clear();
 			bIsInInputMode = false;
+			CursorXPosition = 0;
 		}
-		if (ker.wVirtualKeyCode == 9) //Tab
+		else if (ker.wVirtualKeyCode == 9) //Tab
 		{
 			AttemptAutoComplete();
+		}
+		else if (ker.wVirtualKeyCode == 8) //Delete
+		{
+			if (LineBuffer.size() > 0)
+			{
+				SetConsoleMode(hStdin, ENABLE_PROCESSED_INPUT);
+				std::cout << '\b' << " " << '\b'; //Add a space to the buffer so the original character disappears.
+				LineBuffer.erase(LineBuffer.begin() + CursorXPosition-1);
+				CursorXPosition--;
+			}
+		}
+		else if (ker.wVirtualKeyCode == 37) //Left Arrow
+		{
+			CONSOLE_SCREEN_BUFFER_INFO infoCon;
+			if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &infoCon))
+			{
+				if (CursorXPosition > 0)
+				{
+					COORD NewPos;
+					NewPos.X = infoCon.dwCursorPosition.X - 1;
+					NewPos.Y = infoCon.dwCursorPosition.Y;
+					SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), NewPos);
+					CursorXPosition--;
+				}
+			}
+		}
+		else if (ker.wVirtualKeyCode == 39) //Left Arrow
+		{
+			CONSOLE_SCREEN_BUFFER_INFO infoCon;
+			if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &infoCon))
+			{
+				if (CursorXPosition < LineBuffer.size())
+				{
+					COORD NewPos;
+					NewPos.X = infoCon.dwCursorPosition.X + 1;
+					NewPos.Y = infoCon.dwCursorPosition.Y;
+					SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), NewPos);
+					CursorXPosition++;
+				}
+			}
 		}
 	}
 }
@@ -142,6 +183,7 @@ void AttemptAutoComplete()
 		CurLine += LineChar;
 	}
 
+	//Search for commands that match the line buffer
 	std::vector<std::string> CommandsFound;
 	for (std::string Command : Commands)
 	{
@@ -154,7 +196,7 @@ void AttemptAutoComplete()
 					i = CurLine.length();
 				}
 
-				if (CurLine.length() == i+1)
+				if (CurLine.length() == i + 1)
 				{
 					CommandsFound.push_back(Command);
 				}
@@ -162,6 +204,7 @@ void AttemptAutoComplete()
 		}
 	}
 
+	//If only one command found then obvious thats what we want.
 	if (CommandsFound.size() == 1)
 	{
 		int PrintedSoFar = LineBuffer.size() - 1;
@@ -175,4 +218,7 @@ void AttemptAutoComplete()
 			}
 		}
 	}
+
+	//To Do: Otherwise implement a smart system that autocompletes to the 
+	//most used commands or something and cycles with every tab press.
 }
