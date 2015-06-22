@@ -13,6 +13,7 @@ void AttemptAutoComplete(); //Attempts to auto complete the line buffer.
 bool bIsInConsole;
 bool bIsInInputMode;
 unsigned int CursorXPosition;
+unsigned int CommandPosition;
 HANDLE hStdin;
 DWORD fdwSaveOldMode;
 std::vector<WCHAR> LineBuffer;
@@ -30,6 +31,7 @@ int main()
 	if (!GetConsoleMode(hStdin, &fdwSaveOldMode))
 		return -1;
 	CursorXPosition = 0;
+	CommandPosition = 0;
 	bIsInConsole = true;
 	bIsInInputMode = false;
 	LineBuffer.clear();
@@ -110,6 +112,7 @@ void KeyEventProc(KEY_EVENT_RECORD ker)
 			EnterCommand(LineBuffer);
 			CommandBuffer.push_back(LineBuffer);
 			LineBuffer.clear();
+			CommandPosition = CommandBuffer.size();
 			bIsInInputMode = false;
 			CursorXPosition = 0;
 		}
@@ -123,7 +126,7 @@ void KeyEventProc(KEY_EVENT_RECORD ker)
 			{
 				SetConsoleMode(hStdin, ENABLE_PROCESSED_INPUT);
 				std::cout << '\b' << " " << '\b'; //Add a space to the buffer so the original character disappears.
-				LineBuffer.erase(LineBuffer.begin() + CursorXPosition-1);
+				LineBuffer.erase(LineBuffer.begin() + CursorXPosition - 1);
 				CursorXPosition--;
 			}
 		}
@@ -142,7 +145,7 @@ void KeyEventProc(KEY_EVENT_RECORD ker)
 				}
 			}
 		}
-		else if (ker.wVirtualKeyCode == 39) //Left Arrow
+		else if (ker.wVirtualKeyCode == 39) //Right Arrow
 		{
 			CONSOLE_SCREEN_BUFFER_INFO infoCon;
 			if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &infoCon))
@@ -157,6 +160,57 @@ void KeyEventProc(KEY_EVENT_RECORD ker)
 				}
 			}
 		}
+		else if (ker.wVirtualKeyCode == 38) //Up Arrow
+		{
+
+			if (CommandPosition > 0 && CommandPosition - 1 < CommandBuffer.size())
+			{
+				//clear the buffer
+				for (int i = 0; i < LineBuffer.size(); i++)
+				{
+					SetConsoleMode(hStdin, ENABLE_PROCESSED_INPUT);
+					std::cout << '\b' << " " << '\b'; //Add a space to the buffer so the original character disappears.
+					LineBuffer.erase(LineBuffer.begin() + CursorXPosition - 1);
+					i--;
+					CursorXPosition--;
+				}
+
+				for (char ComChar : CommandBuffer.at(CommandPosition - 1))
+				{
+					std::wcout << ComChar /*<< ker.uChar.AsciiChar << ker.wVirtualKeyCode*/;
+					LineBuffer.insert(LineBuffer.begin() + CursorXPosition, ComChar);
+					CursorXPosition++;
+				}
+				CommandPosition--;
+			}
+		}
+		else if (ker.wVirtualKeyCode == 40) //Down Arrow
+		{
+			//clear the buffer
+			for (int i = 0; i < LineBuffer.size(); i++)
+			{
+				SetConsoleMode(hStdin, ENABLE_PROCESSED_INPUT);
+				std::cout << '\b' << " " << '\b'; //Add a space to the buffer so the original character disappears.
+				LineBuffer.erase(LineBuffer.begin() + CursorXPosition - 1);
+				i--;
+				CursorXPosition--;
+			}
+
+			if (CommandPosition - 1 >= 0 && CommandPosition + 1 < CommandBuffer.size())
+			{
+				CommandPosition++;
+				for (char ComChar : CommandBuffer.at(CommandPosition))
+				{
+					std::wcout << ComChar /*<< ker.uChar.AsciiChar << ker.wVirtualKeyCode*/;
+					LineBuffer.insert(LineBuffer.begin() + CursorXPosition, ComChar);
+					CursorXPosition++;
+				}
+			}
+			else
+			{
+				CommandPosition = CommandBuffer.size();
+			}
+		}
 	}
 }
 
@@ -167,7 +221,7 @@ void EnterCommand(std::vector<WCHAR> Command)
 	{
 		commandString += ComChar;
 	}
-
+	//Put commands here
 	if (commandString == "exit")
 	{
 		bIsInConsole = false;
